@@ -10,7 +10,7 @@ import json
 from asyncua import ua, uamethod, Server
 from idxSet import *
 logger = logging.getLogger(__name__)
-mqttTopic = [("TimeSync",1), ("Request_AP7_OPC_Tree",1), ("Response_AP7_OPC_Tree", 1)]
+mqttTopic = [("TimeSync",1), ("Request_AP7_OPC_Tree",1), ("Response_AP7_OPC_Tree", 1), ("Redis_Archive_topic", 1)]
 
 firstTime = True
 
@@ -22,15 +22,19 @@ async def test() -> None:
     # dataDict = {}
     firstTime = True
     tree_list = 0
-
+    server = 0
     try:
-
+        server = Server()
+        await server.init()
+        server.set_endpoint("opc.tcp://0.0.0.0:4848/maadco/OPCserver/")
+        server.set_server_name("Maadco Example Server")
+        print("server RUN")
         logger.info("Connecting to MQTT")
 
         async with ClientM(hostname="192.168.1.51", port=1883, client_id="OPC_server") as clientMqtt:
+            await clientMqtt.subscribe(mqttTopic)
             logger.info("Connection to MQTT open")
             async with clientMqtt.unfiltered_messages() as messages:
-                await clientMqtt.subscribe(mqttTopic)
                 async for message in messages:
                     if message.topic == "TimeSync":
                         timeSync = message.payload
@@ -39,23 +43,27 @@ async def test() -> None:
                         await clientMqtt.publish("Request_AP7_OPC_Tree", payload="")
                         print("publish_ready")
                         wait_tree = True
-                    if message.topic == "Response_AP7_OPC_Tree":
-                        firstTime = False
+                        if message.topic == "Response_AP7_OPC_Tree":
+                            firstTime = False
+                            print("get_tree")
+                            tree = message.payload.decode('UTF-8')
+                            tree_list = json.loads(tree)
+                            await create_database(server, tree_list)
 
-                        print("get_tree")
-                        tree = message.payload.decode('UTF-8')
-                        tree_list = json.loads(tree)
                     if tree_list != 0:
-                        server = Server()
-                        await server.init()
-                        server.set_endpoint("opc.tcp://0.0.0.0:4848/maadco/OPCserver/")
-                        server.set_server_name("Maadco Example Server")
-                        await create_database(server, tree_list)
-                        async with server:
-                            print("Available loggers are: ")
-                            while True:
+
+
+                        if message.topic == "Redis_Archive_topic":
+                            print("Archive")
+                            data_buffer = message.payload
+                            print(data_buffer)
+                        if server !=0:
+                            async with server:
+                                # print("Available loggers are: ")
+                                # while True:
+
                                 await asyncio.sleep(0.8)
-                                print("Value Updated")
+                                # print(data_buffer)
                     #     dataBase, opcServers = await create_database(message)
                     #     dataDict, client = await create_dataDict(dataBase)
                     #     logger.info(
