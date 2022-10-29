@@ -1,18 +1,65 @@
 import asyncio
 import copy
 import logging
+import struct
 from datetime import datetime
 import time
 from math import sin
 from asyncio_mqtt import Client as ClientM
 from asyncio_mqtt import MqttError
+from struct import *
 import json
 from asyncua import ua, uamethod, Server
 from idxSet import *
+
 logger = logging.getLogger(__name__)
 mqttTopic = [("TimeSync",1), ("Request_AP7_OPC_Tree",1), ("Response_AP7_OPC_Tree", 1), ("Redis_Archive_topic", 1)]
 
 firstTime = True
+device_id = {}
+async def server_initial():
+    server = Server()
+    await server.init()
+    server.set_endpoint("opc.tcp://0.0.0.0:4848/maadco/OPCserver/")
+    server.set_server_name("Maadco Example Server")
+    print("server RUN")
+    logger.info("Connecting to MQTT")
+    return server
+
+async def data_rec_mqtt(clientMqtt, device_id):
+    async with clientMqtt.filtered_messages("Redis_Archive_topic") as messages:
+        async for message in messages:
+
+            print("Archive")
+            data_buffer = message.payload
+            # print(len(data_buffer))
+            # print(data_buffer[3])
+            data_buffer_dict = {
+                "serial": struct.unpack_from("h", data_buffer, 0),
+                "status": struct.unpack_from("b", data_buffer, 2),
+                "time": struct.unpack_from(">6bh", data_buffer, 3),
+                "device_count": struct.unpack_from("b", data_buffer, 11),
+            }
+            for i in range(data_buffer_dict["device_count"][0]):
+                a = struct.unpack_from("b", data_buffer, 12 + i * 2)
+                b = struct.unpack_from("b", data_buffer, 13+i*2)
+                devices = {
+                    a[0]: b[0]
+                }
+                device_id.update(devices)
+                # 12 + (2*57)
+
+                # print(struct.unpack_from("b", data_buffer, 12+i*2))
+                # print(struct.unpack_from("b", data_buffer, 13+i*2))
+                # device_id["id"] + struct.unpack_from("b", data_buffer, 12+i)
+                # device_id["status"] + struct.unpack_from("b", data_buffer, 13+i)
+                # devices_id.update = {
+                #     "id":struct.unpack_from("b", data_buffer, 12+i),
+                #     "status": struct.unpack_from("b", data_buffer, 13+i),
+                # }
+            # print(data_buffer_dict)
+            print(device_id)
+            return data_buffer
 
 async def test() -> None:
     # structPad = set_structure('>8sh')
@@ -24,12 +71,6 @@ async def test() -> None:
     tree_list = 0
     server = 0
     try:
-        server = Server()
-        await server.init()
-        server.set_endpoint("opc.tcp://0.0.0.0:4848/maadco/OPCserver/")
-        server.set_server_name("Maadco Example Server")
-        print("server RUN")
-        logger.info("Connecting to MQTT")
 
         async with ClientM(hostname="192.168.1.51", port=1883, client_id="OPC_server") as clientMqtt:
             await clientMqtt.subscribe(mqttTopic)
@@ -48,71 +89,20 @@ async def test() -> None:
                             print("get_tree")
                             tree = message.payload.decode('UTF-8')
                             tree_list = json.loads(tree)
-                            await create_database(server, tree_list)
+
 
                     if tree_list != 0:
 
-
-                        if message.topic == "Redis_Archive_topic":
-                            print("Archive")
-                            data_buffer = message.payload
-                            print(data_buffer)
+                        server = await server_initial()
+                        await create_database(server, tree_list)
                         if server !=0:
                             async with server:
-                                # print("Available loggers are: ")
-                                # while True:
+                                while True:
+                                    data = await data_rec_mqtt(clientMqtt, device_id)
+                                    # print(struct.unpack("h7bhb2bh", data))
+                                    await asyncio.sleep(0.8)
 
-                                await asyncio.sleep(0.8)
-                                # print(data_buffer)
-                    #     dataBase, opcServers = await create_database(message)
-                    #     dataDict, client = await create_dataDict(dataBase)
-                    #     logger.info(
-                    #         "Message %s %s", message.topic, message.payload
-                    #     )
-                    # if message.topic == "Receive_OPC_Server":
-                    #     bMessage = message.payload.decode('UTF-8')
-                    #     # dataBase = json.loads(bMessage["send_opc_tag"])
-                    #     client = await opcConnection(bMessage)
-                    #     if client != 0:
-                    #         nodesTree = await catchNodes(client)
-                    #         await clientMqtt.publish('OPC_Server_Tree', nodesTree)
-                    #         print("Tree Cached")
-                    #     else:
-                    #         clientMqtt.publish('OPC_Server_Tree', "")
-                    #         print("Not Tree")
-                    # if dataDict != {}:
-                    #     dataDict = await get_values(dataDict, client)
-                    #
-                    #     value = []
-                    #     percentt = []
-                    #     id = []
-                    #     for i in dataDict:
-                    #         id.append(i)
-                    #         if dataDict[i]["nodeList"] != []:
-                    #             if dataDict[i]["values"][0] is None:
-                    #                 value.append(00.00)
-                    #                 dataDict[i]["percent"] = 00.00
-                    #                 percentt.append(0.0)
-                    #             else:
-                    #                 value.append(dataDict[i]["values"][0])
-                    #                 dataDict[i]["percent"] = percentage(dataDict[i]["VMX"], dataDict[i]["VMN"],
-                    #                                                     dataDict[i]["values"])
-                    #                 percentt.append(dataDict[i]["percent"][0])
-                    #             dataDict[i]["timeStamp"] = timeSync
-                    #             dataDict[i]['bufferSize'] = buffer_data_get_padding(structPad, dataDict[i]["bufferSize"], 0,
-                    #                                                                 timeSync, 1)
-                    #             # dataDict[i]['bufferSize'] = await buffer_data_get(structData, dataDict[i]["bufferSize"], i, dataDict[i])
-                    #     values = {
-                    #         "id": id,
-                    #         "values": value,
-                    #         "percent": percentt,
-                    #         "buffer": estimate_buffer_size(len(value))
-                    #     }
-                    #     buffer = values["buffer"]
-                    #     buffer_data_get_padding(structPad, buffer, 0, timeSync, len(value))
-                    #     buffer_data_get(structData, buffer, values)
-                    #     print(values["id"])
-                    #     await clientMqtt.publish("omid_test_topic", payload=buffer)
+
 
             await asyncio.sleep(2)
     except MqttError as e:
